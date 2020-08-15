@@ -1,14 +1,63 @@
 '''
   Author       : Bao Jiarong
-  Creation Date: 2020-06-20
+  Creation Date: 2020-08-12
   email        : bao.salirong@gmail.com
-  Task         : load data
+  Task         : Load data
 '''
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import numpy as np
 import random
 import cv2
+
+def noisy(noise_type,image):
+    if noise_type == "gaussian":
+        row,col,ch= image.shape
+        mean  = 0
+        var   = 0.1
+        sigma = var**0.5
+        gauss = np.random.normal(mean,sigma,(row,col,ch))
+        gauss = gauss.reshape(row,col,ch)
+        noisy = image + gauss
+        min_  = noisy.min()
+        max_  = noisy.max()
+        noisy = (noisy - min_) / (max_ - min_)
+        return noisy
+    elif noise_type == "s_and_p":
+        row,col,ch = image.shape
+        s_vs_p = 0.5
+        amount = 0.004
+        out    = np.copy(image)
+        # Salt mode
+        num_salt = np.ceil(amount * image.size * s_vs_p)
+        coords = [np.random.randint(0, i - 1, int(num_salt)) for i in image.shape]
+        out[tuple(coords)] = 1
+        # Pepper mode
+        num_pepper = np.ceil(amount* image.size * (1. - s_vs_p))
+        coords = [np.random.randint(0, i - 1, int(num_pepper)) for i in image.shape]
+        out[tuple(coords)] = 0
+        min_  = out.min()
+        max_  = out.max()
+        out = (out - min_) / (max_ - min_)
+        return out
+    elif noise_type == "poisson":
+        vals = len(np.unique(image))
+        vals = 2 ** np.ceil(np.log2(vals))
+        noisy = np.random.poisson(image * vals) / float(vals)
+        min_  = noisy.min()
+        max_  = noisy.max()
+        noisy = (noisy - min_) / (max_ - min_)
+        return noisy
+    elif noise_type == "speckle":
+        row,col,ch = image.shape
+        gauss = np.random.randn(row,col,ch)
+        gauss = gauss.reshape(row,col,ch)
+        noisy = image + image * gauss
+        min_  = noisy.min()
+        max_  = noisy.max()
+        noisy = (noisy - min_) / (max_ - min_)
+        return noisy
+    return image
 
 def scaling_tech(x,method = "normalization"):
     if method == "normalization":
@@ -20,6 +69,7 @@ def scaling_tech(x,method = "normalization"):
 def load_heavy(dir,width,height,shuffle=True, split_ratio = 0.8, augment_data = False):
     # Step 1: Load Data...............
     subdirs = os.listdir(dir)
+    subdirs = [d for d in subdirs if os.path.isdir(dir+d)]
     subdirs = sorted(subdirs)
 
     labels = []
@@ -29,7 +79,7 @@ def load_heavy(dir,width,height,shuffle=True, split_ratio = 0.8, augment_data = 
     print("Loading data")
     n = len(subdirs)
     for i in range(n):
-        filenames = os.listdir(dir+subdirs[i])
+        filenames = os.listdir(dir+subdirs[i])#[:100]
         print("class",subdirs[i],"contains",len(filenames),"images")
         for j in range(len(filenames)):
             ext = (os.path.splitext(filenames[j]))[1]
@@ -74,6 +124,7 @@ def load_heavy(dir,width,height,shuffle=True, split_ratio = 0.8, augment_data = 
 def load_light(dir,width,height,shuffle=True, split_ratio = 0.8, augment_data = False):
     # Step 1: Load Data...............
     subdirs = os.listdir(dir)
+    subdirs = [d for d in subdirs if os.path.isdir(dir+d)]
     subdirs = sorted(subdirs)
 
     labels = []
@@ -90,8 +141,6 @@ def load_light(dir,width,height,shuffle=True, split_ratio = 0.8, augment_data = 
             if ext in img_ext:
                 # img_filename = dir + subdirs[i]+"/" + filenames[j]
                 img_filename = os.path.join(dir, subdirs[i], filenames[j])
-                # img   = cv2.imread(img_filename)
-                # image = cv2.resize(img,(height,width),interpolation = cv2.INTER_AREA)/255.0
 
                 images.append(img_filename)
                 labels.append(i)
@@ -102,7 +151,7 @@ def load_light(dir,width,height,shuffle=True, split_ratio = 0.8, augment_data = 
     # Step 2: Normalize Data..........
     # images = scaling_tech(images,method="normalization")
 
-    # Step 4: Shuffle Data............
+    # Step 3: Shuffle Data............
     if shuffle == True:
         print("Shuffling data")
         indics = np.arange(0,len(images))
@@ -111,7 +160,7 @@ def load_light(dir,width,height,shuffle=True, split_ratio = 0.8, augment_data = 
         labels = labels[indics]
         images = images[indics]
 
-    # Step 5: Split Data.............
+    # Step 4: Split Data.............
     print("Splitting data")
     m = int(len(images)*split_ratio)
 
@@ -136,15 +185,17 @@ def get_batch_light(X_train, Y_train, batch_size, height,width, augment_data = F
     for i in range(t,t+batch_size):
         img   = cv2.imread(X_train[i]).astype(np.float32)
         image = cv2.resize(img,(height,width),interpolation = cv2.INTER_AREA)/255.0
-        x.append(image)
-        y.append(Y_train[i])
+        method = np.random.choice(["gaussian","s_and_p","poisson","speckle"])
+        noisy_image = noisy(method,image)
+        x.append(noisy_image)
+        y.append(image)
 
         if augment_data == True:
             img_v = image[:,::-1]
             # img_h = image[::-1,:]
             # img_h_v = image[::-1,::-1]
-            x.append(img_v)
-            y.append(i)
+            x.append(noisy_img_v)
+            y.append(img_v)
 
     if augment_data == True:
         indics = np.arange(0,2*batch_size)
@@ -154,4 +205,4 @@ def get_batch_light(X_train, Y_train, batch_size, height,width, augment_data = F
         x = x[:batch_size]
         y = y[:batch_size]
 
-    return np.asarray(x), np.asarray(y)
+    return np.asarray(x).astype(np.float32), np.asarray(y).astype(np.float32)
